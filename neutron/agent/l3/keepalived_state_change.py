@@ -18,6 +18,7 @@ import sys
 import threading
 
 import httplib2
+import netaddr
 from oslo_config import cfg
 from oslo_log import log as logging
 
@@ -31,6 +32,7 @@ from neutron.common import utils as common_utils
 from neutron.conf.agent.l3 import keepalived
 from neutron import privileged
 
+from time import sleep
 
 LOG = logging.getLogger(__name__)
 INITIAL_STATE_READ_TIMEOUT = 10
@@ -115,6 +117,8 @@ class MonitorDaemon(daemon.Daemon):
                     new_state = 'backup'
                 self.write_state_change(new_state)
                 self.notify_agent(new_state)
+            elif event['name'] != self.interface and event['event'] == 'added':
+                self.send_garp(event)
 
     def handle_initial_state(self):
         try:
@@ -158,6 +162,20 @@ class MonitorDaemon(daemon.Daemon):
             raise Exception(_('Unexpected response: %s') % resp)
 
         LOG.debug('Notified agent router %s, state %s', self.router_id, state)
+
+    def send_garp(self, event):
+        """Send delayed gratuitous ARP for given event."""
+        sleep(10)
+        ip_address = str(netaddr.IPNetwork(event['cidr']).ip)
+        ip_lib.send_ip_addr_adv_notif(
+            self.namespace,
+            event['name'],
+            ip_address,
+            log_exception=False,
+            use_eventlet=False
+        )
+        LOG.debug('Sent GARP to %(ip_address)s from %(device_name)s',
+                  {'ip_address': ip_address, 'device_name': event['name']})
 
     def handle_sigterm(self, signum, frame):
         self.event_stop.set()
